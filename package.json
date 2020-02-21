@@ -5,10 +5,12 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-build-env neon build photoman-core --release",
+    "build": "electron-build-env neon build photoman-core",
+    "build-release": "electron-build-env neon build photoman-core --release",
     "clean": "rm -rf node_modules",
     "reinstall": "npm run clean && npm install",
-    "rebuild": "npm run clean && npm install && npm run build"
+    "rebuild": "npm run clean && npm install && npm run build",
+    "rebuild-release": "npm run clean && npm install && npm run build-release"
   },
   "author": "Matthew Shang",
   "devDependencies": {
