@@ -1,0 +1,3 @@
+# photoman-core
+
+

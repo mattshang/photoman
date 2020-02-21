@@ -1,11 +1,14 @@
 {
-  "name": "photon",
+  "name": "photoman",
   "version": "0.1.0",
   "description": "",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-build-env neon build photon-core --release"
+    "build": "electron-build-env neon build photoman-core --release",
+    "clean": "rm -rf node_modules",
+    "reinstall": "npm run clean && npm install",
+    "rebuild": "npm run clean && npm install && npm run build"
   },
   "author": "Matthew Shang",
   "devDependencies": {
@@ -14,6 +17,6 @@
     "neon-cli": "^0.3.3"
   },
   "dependencies": {
-    "photon-core": "file:photon-core"
+    "photoman-core": "file:photoman-core"
   }
 }
