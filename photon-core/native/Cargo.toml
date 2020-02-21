@@ -1,0 +1,17 @@
+[package]
+name = "photon-core"
+version = "0.1.0"
+authors = ["Matthew Shang <mshang47@gmail.com>"]
+license = "MIT"
+build = "build.rs"
+exclude = ["artifacts.json", "index.node"]
+
+[lib]
+name = "photon_core"
+crate-type = ["cdylib"]
+
+[build-dependencies]
+neon-build = "0.3.3"
+
+[dependencies]
+neon = "0.3.3"
