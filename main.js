@@ -12,7 +12,10 @@ const { BrowserWindow } = electron;
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
 let mainWindow;
+// GoogleDrive instance
 let drive;
+// ID of the current folder
+let current = 0;
 
 function createWindow() {
   // Create the browser window.
@@ -42,6 +45,15 @@ function createWindow() {
   });
 }
 
+// This method zips together the ids of the children in the current
+// folder with their names and then orders the renderer to redraw
+// with the new data.
+function loadFiles() {
+  const ids = drive.getChildren(current);
+  const zipped = ids.map(id => [id, drive.getName(id)]);
+  mainWindow.webContents.send('load-files', zipped);
+}
+
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
@@ -49,7 +61,7 @@ app.on('ready', () => {
   createWindow();
   drive = new GoogleDrive();
   mainWindow.webContents.once('dom-ready', () => {
-    mainWindow.webContents.send('loadFiles', drive.files());
+    loadFiles();
   })
 });
 
@@ -70,5 +82,15 @@ app.on('activate', () => {
   }
 });
 
-// In this file you can include the rest of your app's specific main process
-// code. You can also put them in separate files and require them here.
+// The request-files event is emitted by the renderer. arg is the
+// (integer) id of the requested folder.
+ipc.on('request-files', (event, arg) => {
+  current = arg;
+  loadFiles();
+});
+
+// The file-back event is emitted by the renderer. 
+ipc.on('file-back', (event, arg) => {
+  current = drive.getParent(current);
+  loadFiles();
+});
