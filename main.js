@@ -46,12 +46,12 @@ function createWindow() {
 }
 
 // This method zips together the ids of the children in the current
-// folder with their names and then orders the renderer to redraw
-// with the new data.
-function loadFiles() {
+// folder with their names. Since drive.getChildren is blocking and 
+// could take a (very) long time, getChildren is async.
+async function getChildren() {
   const ids = drive.getChildren(current);
   const zipped = ids.map(id => [id, drive.getName(id)]);
-  mainWindow.webContents.send('load-files', zipped);
+  return zipped;
 }
 
 // This method will be called when Electron has finished
@@ -60,8 +60,9 @@ function loadFiles() {
 app.on('ready', () => {
   createWindow();
   drive = new GoogleDrive();
-  mainWindow.webContents.once('dom-ready', () => {
-    loadFiles();
+  mainWindow.webContents.once('dom-ready', async () => {
+    const zipped = await getChildren();
+    mainWindow.webContents.send('load-files', zipped);
   })
 });
 
@@ -84,13 +85,15 @@ app.on('activate', () => {
 
 // The request-files event is emitted by the renderer. arg is the
 // (integer) id of the requested folder.
-ipc.on('request-files', (event, arg) => {
+ipc.on('request-files', async (event, arg) => {
   current = arg;
-  loadFiles();
+  const zipped = await getChildren();
+  event.sender.send('load-files', zipped);
 });
 
 // The file-back event is emitted by the renderer. 
-ipc.on('file-back', (event, arg) => {
+ipc.on('file-back', async (event, arg) => {
   current = drive.getParent(current);
-  loadFiles();
+  const zipped = await getChildren();
+  event.sender.send('load-files', zipped);
 });
