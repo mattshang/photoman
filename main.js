@@ -24,6 +24,7 @@ function createWindow() {
     height: 1080,
     webPreferences: {
       nodeIntegration: true,
+      // Set webSecurity to false so we can load images from the local disk
       webSecurity: false,
     }
   });

@@ -10,6 +10,8 @@ use std::fs;
 use std::io;
 use std::path::Path;
 use std::collections::HashMap;
+use std::process::Command;
+use std::ffi::OsStr;
 
 use hyper::net::HttpsConnector;
 use hyper_native_tls::NativeTlsClient;
@@ -21,21 +23,10 @@ use yup_oauth2::{
     DefaultAuthenticatorDelegate, DiskTokenStorage, FlowType,
 };
 
-// struct BackgroundTask {
-
-// }
-
-// impl Task for BackgroundTask {
-//     type Output = i32;
-//     type Error = String;
-//     type JsEvent = JsNumber;
-
-//     fn perform
-// }
-
 pub struct Entry {
     name: String,
     drive_id: String,
+    pub drive_type: String, 
     parent: u32,
     pub is_directory: bool,
     pub children: Option<Vec<u32>>,
@@ -43,10 +34,11 @@ pub struct Entry {
 }
 
 impl Entry {
-    pub fn new(name: String, drive_id: String, parent: u32, is_directory: bool) -> Entry {
+    pub fn new(name: String, drive_id: String, drive_type: String, parent: u32, is_directory: bool) -> Entry {
         Entry {
             name,
             drive_id,
+            drive_type,
             parent,
             is_directory,
             children: None,
@@ -54,6 +46,8 @@ impl Entry {
         }
     }
 }
+
+const DRIVE_FOLDER_TYPE: &'static str = "application/vnd.google-apps.folder";
 
 pub struct GoogleDrive {
     hub: DriveHub<Client, Authenticator<
@@ -91,7 +85,7 @@ impl GoogleDrive {
 
         // The root folder is special, so manually initialize it
         drive.compressed_ids.insert("root".to_string(), 0);
-        drive.entries.insert(0, Entry::new("root".to_string(), "root".to_string(), 0, true));
+        drive.entries.insert(0, Entry::new("root".to_string(), "root".to_string(), DRIVE_FOLDER_TYPE.to_string(), 0, true));
 
         drive
     }
@@ -135,9 +129,10 @@ impl GoogleDrive {
                     self.current_id += 1;
                     // Add this child to the index
                     self.compressed_ids.insert(drive_id.clone(), new_id);
-                    let name = file.name.unwrap_or(String::new());
-                    let is_directory = file.mime_type.unwrap_or(String::new()) == "application/vnd.google-apps.folder";
-                    self.entries.insert(new_id, Entry::new(name, drive_id, id, is_directory));
+                    let name = file.name.unwrap_or(String::new()).clone();
+                    let drive_type = file.mime_type.unwrap_or(String::new()).clone();
+                    let is_directory = drive_type == DRIVE_FOLDER_TYPE;
+                    self.entries.insert(new_id, Entry::new(name, drive_id, drive_type, id, is_directory));
 
                     new_id
                 }
@@ -167,18 +162,39 @@ impl GoogleDrive {
             return Ok(entry.photo_path.as_ref().unwrap().clone());
         }
 
+        // Download the photo from Google Drive
         let scope = "https://www.googleapis.com/auth/drive";
         let (mut resp, _file) = self.hub
             .files()     
             .get(&entry.drive_id)
             .param("alt", "media")
+            // .param("fields", "thumbnailLink")
             .add_scope(scope)
             .doit()
             .unwrap();
         
-        let path = entry.name.clone();
+        let extension = Path::new(&entry.name)
+            .extension()
+            .and_then(OsStr::to_str)
+            .unwrap();
+        let mut path = format!("cache/{}.{}", id, extension);
         let mut out = fs::File::create(&path)?;
+        // Write HTTPS response to file on disk
         io::copy(&mut resp, &mut out).expect("failed to write photo to local disk");
+
+        // Instead of having to convert the RAW image to JPG ourselves,
+        // NEF RAW files include their own headers with a preview JPG
+        // already created. This uses exiv2 to extract the included preview
+        // to a separate file.
+        if entry.drive_type == "image/x-nikon-nef" {
+            Command::new("/usr/local/bin/exiv2")
+                .args(&["-ep3", "-l", "./cache/", &path])
+                .status()
+                .expect("failed to execute exiv2");
+            let preview = format!("cache/{}-preview3.jpg", id);
+            path = format!("cache/{}.jpg", id);
+            fs::rename(&preview, &path)?;
+        }
 
         let entry = self.entries.get_mut(&id).unwrap();
         entry.photo_path = Some(path.clone());
@@ -260,7 +276,7 @@ declare_types! {
             });
 
             let elapsed = now.elapsed();
-            println!("Elapsed: {:.2?}", elapsed);
+            println!("getPhotoPath took: {:.2?}", elapsed);
 
             Ok(cx.string(path).upcast())
         }

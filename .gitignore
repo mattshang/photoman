@@ -3,6 +3,7 @@ token_store.json
 .DS_Store
 *.jpg
 *.png
+cache/
 
 # Created by https://www.gitignore.io/api/node,rust
 # Edit at https://www.gitignore.io/?templates=node,rust
