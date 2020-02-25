@@ -20,10 +20,11 @@ let current = 0;
 function createWindow() {
   // Create the browser window.
   mainWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
+    width: 1920,
+    height: 1080,
     webPreferences: {
-      nodeIntegration: true
+      nodeIntegration: true,
+      webSecurity: false,
     }
   });
 
@@ -61,8 +62,9 @@ app.on('ready', () => {
   createWindow();
   drive = new GoogleDrive();
   mainWindow.webContents.once('dom-ready', async () => {
+    current = 0;
     const zipped = await getChildren();
-    mainWindow.webContents.send('load-files', zipped);
+    mainWindow.webContents.send('display-directory', zipped);
   })
 });
 
@@ -83,17 +85,27 @@ app.on('activate', () => {
   }
 });
 
-// The request-files event is emitted by the renderer. arg is the
-// (integer) id of the requested folder.
-ipc.on('request-files', async (event, arg) => {
+async function getPhotoPath() {
+  return drive.getPhotoPath(current);
+}
+
+// The request-entry event is emitted by the renderer. arg is the
+// (integer) id of the requested directory or photo.
+ipc.on('request-entry', async (event, arg) => {
   current = arg;
-  const zipped = await getChildren();
-  event.sender.send('load-files', zipped);
+  if (drive.isDirectory(current)) {
+    const zipped = await getChildren();
+    event.sender.send('display-directory', zipped);
+  } else {
+    const path = await getPhotoPath();
+    event.sender.send('display-photo', path);
+  }
 });
 
 // The file-back event is emitted by the renderer. 
 ipc.on('file-back', async (event, arg) => {
+  console.log(current);
   current = drive.getParent(current);
   const zipped = await getChildren();
-  event.sender.send('load-files', zipped);
+  event.sender.send('display-directory', zipped);
 });

@@ -1,6 +1,8 @@
 client_secret.json
 token_store.json
 .DS_Store
+*.jpg
+*.png
 
 # Created by https://www.gitignore.io/api/node,rust
 # Edit at https://www.gitignore.io/?templates=node,rust

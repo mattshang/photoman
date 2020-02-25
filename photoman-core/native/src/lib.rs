@@ -6,6 +6,8 @@ extern crate yup_oauth2;
 
 use neon::prelude::*;
 
+use std::fs;
+use std::io;
 use std::path::Path;
 use std::collections::HashMap;
 
@@ -19,13 +21,25 @@ use yup_oauth2::{
     DefaultAuthenticatorDelegate, DiskTokenStorage, FlowType,
 };
 
+// struct BackgroundTask {
+
+// }
+
+// impl Task for BackgroundTask {
+//     type Output = i32;
+//     type Error = String;
+//     type JsEvent = JsNumber;
+
+//     fn perform
+// }
+
 pub struct Entry {
     name: String,
     drive_id: String,
     parent: u32,
     pub is_directory: bool,
     pub children: Option<Vec<u32>>,
-    image_path: Option<String>,
+    photo_path: Option<String>,
 }
 
 impl Entry {
@@ -36,7 +50,7 @@ impl Entry {
             parent,
             is_directory,
             children: None,
-            image_path: None,
+            photo_path: None,
         }
     }
 }
@@ -140,6 +154,38 @@ impl GoogleDrive {
         clone
     }
 
+    // Returns path to photo on disk. 
+    // If the photo is already downloaded, it directly returns the path. Otherwise,
+    // the photo is downloaded to the local cache and the path returned.
+    pub fn get_photo_path(&mut self, id: u32) -> Result<String, io::Error> {
+        let entry = self.entries.get(&id).unwrap();
+        if entry.is_directory {
+            panic!("Tried to call get_photo_path on a non-photo.");
+        }
+
+        if entry.photo_path.is_some() {
+            return Ok(entry.photo_path.as_ref().unwrap().clone());
+        }
+
+        let scope = "https://www.googleapis.com/auth/drive";
+        let (mut resp, _file) = self.hub
+            .files()     
+            .get(&entry.drive_id)
+            .param("alt", "media")
+            .add_scope(scope)
+            .doit()
+            .unwrap();
+        
+        let path = entry.name.clone();
+        let mut out = fs::File::create(&path)?;
+        io::copy(&mut resp, &mut out).expect("failed to write photo to local disk");
+
+        let entry = self.entries.get_mut(&id).unwrap();
+        entry.photo_path = Some(path.clone());
+
+        Ok(path)
+    }
+
     pub fn get_name(&self, id: u32) -> &String {
         &self.entries.get(&id).unwrap().name
     }
@@ -148,10 +194,34 @@ impl GoogleDrive {
         self.entries.get(&id).unwrap().parent
     }
 
-    // pub fn download(&self, id: u32, )
+    pub fn is_directory(&self, id: u32) -> bool {
+        self.entries.get(&id).unwrap().is_directory
+    }
+
+    // pub fn is_loaded(&self, id: u32) -> bool {
+    //     if self.is_directory(id) {
+    //         self.entries.get(&id).unwrap().children.is_some()
+    //     } else {
+    //         self.entries.get(&id).unwrap().photo_path.is_some()
+    //     }
+    // }
 }
 
 const CLIENT_SECRET_FILE: &'static str = "client_secret.json";
+
+// struct LoadPhotoTask {
+//     id: u32,
+// }
+
+// impl Task for LoadPhotoTask {
+//     type Output = String;
+//     type Error = String;
+//     type JsEvent = JsString;
+
+//     fn perform(&self) -> Result<String, String> {
+
+//     }
+// }
 
 declare_types! {
     pub class JsGoogleDrive for GoogleDrive {
@@ -175,6 +245,26 @@ declare_types! {
             Ok(js_array.upcast())
         }
 
+        method getPhotoPath(mut cx) {
+            let id: u32 = cx.argument::<JsNumber>(0)?.value() as u32;
+
+            use std::time::Instant;
+            let now = Instant::now();
+
+            let mut this = cx.this();
+            let path: String = cx.borrow_mut(&mut this, |mut drive| {
+                match drive.get_photo_path(id) {
+                    Ok(path) => path,
+                    Err(e) => panic!("getPhotoPath threw an error")
+                }
+            });
+
+            let elapsed = now.elapsed();
+            println!("Elapsed: {:.2?}", elapsed);
+
+            Ok(cx.string(path).upcast())
+        }
+
         method getName(mut cx) {
             let id: u32 = cx.argument::<JsNumber>(0)?.value() as u32;
             let this = cx.this();
@@ -187,6 +277,13 @@ declare_types! {
             let this = cx.this();
             let par: u32 = cx.borrow(&this, |drive| drive.get_parent(id));
             Ok(cx.number(par as f64).upcast())
+        }
+
+        method isDirectory(mut cx) {
+            let id: u32 = cx.argument::<JsNumber>(0)?.value() as u32;
+            let this = cx.this();
+            let is_directory: bool = cx.borrow(&this, |drive| drive.is_directory(id));
+            Ok(cx.boolean(is_directory).upcast())
         }
     }
 }

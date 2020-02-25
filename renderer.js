@@ -1,11 +1,14 @@
 const ipc = require('electron').ipcRenderer;
+const fs = require('fs');
 
 const backButton = document.getElementById('back-button');
 backButton.addEventListener('click', e => {
   ipc.send('file-back');
 })
 
+const table = document.querySelector('#file-table');
 const fileList = document.querySelector('#file-table tbody');
+const contents = document.querySelector('.window-content');
 fileList.addEventListener('click', e => {
   // make sure we get the enclosing <tr>
   var target = e.target;
@@ -15,10 +18,11 @@ fileList.addEventListener('click', e => {
 
   // dataset.id is an HTML5 custom attribute
   const id = parseInt(target.dataset.id);
-  ipc.send('request-files', id);
+  ipc.send('request-entry', id);
 });
 
-ipc.on('load-files', (event, arg) => {
+const image = document.getElementById('image-container');
+ipc.on('display-directory', (event, arg) => {
   // Remove all <tr> from the <tbody>
   while (fileList.firstChild) {
     fileList.removeChild(fileList.firstChild);
@@ -41,4 +45,16 @@ ipc.on('load-files', (event, arg) => {
     row.setAttribute('data-id', id);
     fileList.appendChild(row);
   }
+
+  if (image.parentNode === contents) contents.removeChild(image);
+  if (table.parentNode !== contents) contents.appendChild(table);
+  contents.style.backgroundColor = 'white';
+});
+
+ipc.on('display-photo', (event, arg) => {
+  console.log(arg);
+  image.src = arg;
+  if (image.parentNode !== contents) contents.appendChild(image);
+  if (table.parentNode === contents) contents.removeChild(table);
+  contents.style.backgroundColor = 'black';
 });
