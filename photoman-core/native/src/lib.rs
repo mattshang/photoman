@@ -23,6 +23,22 @@ pub struct Entry {
     name: String,
     drive_id: String,
     parent: u32,
+    pub is_directory: bool,
+    pub children: Option<Vec<u32>>,
+    image_path: Option<String>,
+}
+
+impl Entry {
+    pub fn new(name: String, drive_id: String, parent: u32, is_directory: bool) -> Entry {
+        Entry {
+            name,
+            drive_id,
+            parent,
+            is_directory,
+            children: None,
+            image_path: None,
+        }
+    }
 }
 
 pub struct GoogleDrive {
@@ -30,7 +46,6 @@ pub struct GoogleDrive {
         DefaultAuthenticatorDelegate, DiskTokenStorage, Client>>,
     compressed_ids: HashMap<String, u32>,
     entries: HashMap<u32, Entry>,
-    children: HashMap<u32, Vec<u32>>,
     current_id: u32,
 }
 
@@ -57,17 +72,12 @@ impl GoogleDrive {
             hub: hub,
             compressed_ids: HashMap::new(),
             entries: HashMap::new(),
-            children: HashMap::new(),
             current_id: 1
         };
 
         // The root folder is special, so manually initialize it
         drive.compressed_ids.insert("root".to_string(), 0);
-        drive.entries.insert(0, Entry { 
-            name: "root".to_string(), 
-            drive_id: "root".to_string(), 
-            parent: 0 
-        });
+        drive.entries.insert(0, Entry::new("root".to_string(), "root".to_string(), 0, true));
 
         drive
     }
@@ -75,43 +85,59 @@ impl GoogleDrive {
     // Returns Vec with the ids of children of the folder represented by
     // the input id. 
     pub fn get_children(&mut self, id: u32) -> Vec<u32> {
-        if !self.children.contains_key(&id) {
-            // The children of id have not been loaded yet. Load them...
-            let drive_id = &self.entries.get(&id).unwrap().drive_id;
-            let query = format!("'{}' in parents and trashed = false", drive_id);
-            // Get Vec<google_drive3::File> list_result
-            let (_resp, list_result) = self.hub
-                .files()
-                .list()
-                .q(&query)
-                .doit()
-                .unwrap();
-
-            let mut children: Vec<u32> = vec![];
-            for file in list_result.files.unwrap_or(vec![]) {
-                let drive_id = file.id.unwrap_or(String::new());
-                // Has the child already been seen?
-                let child_id = match self.compressed_ids.get(&drive_id) {
-                    Some(&val) => val,
-                    None => {
-                        // No, this child hasn't been indexed yet.
-                        let new_id = self.current_id;
-                        // Consume this current_id
-                        self.current_id += 1;
-                        // Add this child to the index
-                        self.compressed_ids.insert(drive_id.clone(), new_id);
-                        let name = file.name.unwrap_or(String::new());
-                        self.entries.insert(new_id, Entry { name, drive_id, parent: id });
-
-                        new_id
-                    }
-                };
-                children.push(child_id);
-            }
-            self.children.insert(id, children);
+        // Start with an immutable reference, since inserting into self.entries
+        // requires a mutable reference to self.entries
+        let entry = self.entries.get(&id).unwrap();
+        if !entry.is_directory {
+            panic!("Tried to call get_children on a non-directory.");
         }
 
-        self.children.get(&id).unwrap().clone()
+        if entry.children.is_some() {
+            return entry.children.as_ref().unwrap().clone();
+        }
+
+        // entry's children have not been loaded yet. Load them now.
+        let drive_id = &entry.drive_id;
+        let query = format!("'{}' in parents and trashed = false", drive_id);
+        // Get Vec<google_drive3::File> list_result
+        let (_resp, list_result) = self.hub
+            .files()
+            .list()
+            .q(&query)
+            .doit()
+            .unwrap();
+
+        let mut children: Vec<u32> = vec![];
+        for file in list_result.files.unwrap_or(vec![]) {
+            let drive_id = file.id.unwrap_or(String::new());
+
+            // Has the child already been seen?
+            let child_id = match self.compressed_ids.get(&drive_id) {
+                Some(&val) => val,
+                None => {
+                    // No, this child hasn't been indexed yet.
+                    let new_id = self.current_id;
+                    // Consume this current_id
+                    self.current_id += 1;
+                    // Add this child to the index
+                    self.compressed_ids.insert(drive_id.clone(), new_id);
+                    let name = file.name.unwrap_or(String::new());
+                    let is_directory = file.mime_type.unwrap_or(String::new()) == "application/vnd.google-apps.folder";
+                    self.entries.insert(new_id, Entry::new(name, drive_id, id, is_directory));
+
+                    new_id
+                }
+            };
+            children.push(child_id);
+        }
+
+        // Now, get a mutable reference to entry in order to modify it
+        let entry: &mut Entry = self.entries.get_mut(&id).unwrap();
+        // Keep a cloned version owned by this function to return
+        let clone = children.clone();
+        entry.children = Some(children);
+
+        clone
     }
 
     pub fn get_name(&self, id: u32) -> &String {
@@ -121,6 +147,8 @@ impl GoogleDrive {
     pub fn get_parent(&self, id: u32) -> u32 {
         self.entries.get(&id).unwrap().parent
     }
+
+    // pub fn download(&self, id: u32, )
 }
 
 const CLIENT_SECRET_FILE: &'static str = "client_secret.json";
