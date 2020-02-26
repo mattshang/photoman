@@ -3,6 +3,7 @@ extern crate hyper;
 extern crate hyper_native_tls;
 extern crate google_drive3;
 extern crate yup_oauth2;
+extern crate rusqlite;
 
 use neon::prelude::*;
 
@@ -23,38 +24,12 @@ use yup_oauth2::{
     DefaultAuthenticatorDelegate, DiskTokenStorage, FlowType,
 };
 
-pub struct Entry {
-    name: String,
-    drive_id: String,
-    pub drive_type: String, 
-    parent: u32,
-    pub is_directory: bool,
-    pub children: Option<Vec<u32>>,
-    photo_path: Option<String>,
-}
-
-impl Entry {
-    pub fn new(name: String, drive_id: String, drive_type: String, parent: u32, is_directory: bool) -> Entry {
-        Entry {
-            name,
-            drive_id,
-            drive_type,
-            parent,
-            is_directory,
-            children: None,
-            photo_path: None,
-        }
-    }
-}
-
-const DRIVE_FOLDER_TYPE: &'static str = "application/vnd.google-apps.folder";
+mod index;
 
 pub struct GoogleDrive {
     hub: DriveHub<Client, Authenticator<
         DefaultAuthenticatorDelegate, DiskTokenStorage, Client>>,
-    compressed_ids: HashMap<String, u32>,
-    entries: HashMap<u32, Entry>,
-    current_id: u32,
+    index: index::Index,
 }
 
 impl GoogleDrive {
@@ -78,14 +53,8 @@ impl GoogleDrive {
 
         let mut drive = GoogleDrive { 
             hub: hub,
-            compressed_ids: HashMap::new(),
-            entries: HashMap::new(),
-            current_id: 1
+            index: index::Index::new(),
         };
-
-        // The root folder is special, so manually initialize it
-        drive.compressed_ids.insert("root".to_string(), 0);
-        drive.entries.insert(0, Entry::new("root".to_string(), "root".to_string(), DRIVE_FOLDER_TYPE.to_string(), 0, true));
 
         drive
     }
@@ -93,19 +62,16 @@ impl GoogleDrive {
     // Returns Vec with the ids of children of the folder represented by
     // the input id. 
     pub fn get_children(&mut self, id: u32) -> Vec<u32> {
-        // Start with an immutable reference, since inserting into self.entries
-        // requires a mutable reference to self.entries
-        let entry = self.entries.get(&id).unwrap();
-        if !entry.is_directory {
+        if !self.index.is_directory(id) {
             panic!("Tried to call get_children on a non-directory.");
         }
-
-        if entry.children.is_some() {
-            return entry.children.as_ref().unwrap().clone();
+        // Early exit if the directory is already fully loaded
+        if self.index.is_fully_loaded(id) {
+            return self.index.get_children(id);
         }
 
         // entry's children have not been loaded yet. Load them now.
-        let drive_id = &entry.drive_id;
+        let drive_id = self.index.get_drive_id(id);
         let query = format!("'{}' in parents and trashed = false", drive_id);
         // Get Vec<google_drive3::File> list_result
         let (_resp, list_result) = self.hub
@@ -115,65 +81,42 @@ impl GoogleDrive {
             .doit()
             .unwrap();
 
-        let mut children: Vec<u32> = vec![];
+        // let mut children: Vec<u32> = vec![];
         for file in list_result.files.unwrap_or(vec![]) {
-            let drive_id = file.id.unwrap_or(String::new());
-
-            // Has the child already been seen?
-            let child_id = match self.compressed_ids.get(&drive_id) {
-                Some(&val) => val,
-                None => {
-                    // No, this child hasn't been indexed yet.
-                    let new_id = self.current_id;
-                    // Consume this current_id
-                    self.current_id += 1;
-                    // Add this child to the index
-                    self.compressed_ids.insert(drive_id.clone(), new_id);
-                    let name = file.name.unwrap_or(String::new()).clone();
-                    let drive_type = file.mime_type.unwrap_or(String::new()).clone();
-                    let is_directory = drive_type == DRIVE_FOLDER_TYPE;
-                    self.entries.insert(new_id, Entry::new(name, drive_id, drive_type, id, is_directory));
-
-                    new_id
-                }
-            };
-            children.push(child_id);
+            self.index.add_child(id, &file);
         }
 
-        // Now, get a mutable reference to entry in order to modify it
-        let entry: &mut Entry = self.entries.get_mut(&id).unwrap();
-        // Keep a cloned version owned by this function to return
-        let clone = children.clone();
-        entry.children = Some(children);
-
-        clone
+        // clone
+        self.index.get_children(id)
     }
 
     // Returns path to photo on disk. 
     // If the photo is already downloaded, it directly returns the path. Otherwise,
     // the photo is downloaded to the local cache and the path returned.
     pub fn get_photo_path(&mut self, id: u32) -> Result<String, io::Error> {
-        let entry = self.entries.get(&id).unwrap();
-        if entry.is_directory {
-            panic!("Tried to call get_photo_path on a non-photo.");
+        if self.index.is_fully_loaded(id) {
+            return Ok(self.index.get_photo_path(id).to_string());
         }
 
-        if entry.photo_path.is_some() {
-            return Ok(entry.photo_path.as_ref().unwrap().clone());
-        }
-
+        use std::time::Instant;
+        let now = Instant::now();
         // Download the photo from Google Drive
         let scope = "https://www.googleapis.com/auth/drive";
+        let drive_id = self.index.get_drive_id(id);
         let (mut resp, _file) = self.hub
             .files()     
-            .get(&entry.drive_id)
+            .get(drive_id)
             .param("alt", "media")
             // .param("fields", "thumbnailLink")
             .add_scope(scope)
             .doit()
             .unwrap();
+
+        let elapsed = now.elapsed();
+        println!("request took: {:.2?}", elapsed);
+        let now = Instant::now();
         
-        let extension = Path::new(&entry.name)
+        let extension = Path::new(self.index.get_name(id))
             .extension()
             .and_then(OsStr::to_str)
             .unwrap();
@@ -182,11 +125,15 @@ impl GoogleDrive {
         // Write HTTPS response to file on disk
         io::copy(&mut resp, &mut out).expect("failed to write photo to local disk");
 
+        let elapsed = now.elapsed();
+        println!("write took: {:.2?}", elapsed);
+        let now = Instant::now();
+
         // Instead of having to convert the RAW image to JPG ourselves,
         // NEF RAW files include their own headers with a preview JPG
         // already created. This uses exiv2 to extract the included preview
         // to a separate file.
-        if entry.drive_type == "image/x-nikon-nef" {
+        if self.index.get_drive_type(id) == "image/x-nikon-nef" {
             Command::new("/usr/local/bin/exiv2")
                 .args(&["-ep3", "-l", "./cache/", &path])
                 .status()
@@ -196,31 +143,26 @@ impl GoogleDrive {
             fs::rename(&preview, &path)?;
         }
 
-        let entry = self.entries.get_mut(&id).unwrap();
-        entry.photo_path = Some(path.clone());
+        let elapsed = now.elapsed();
+        println!("convert took: {:.2?}", elapsed);
+        let now = Instant::now();
+
+        self.index.add_loaded_photo(id, &path);
 
         Ok(path)
     }
 
-    pub fn get_name(&self, id: u32) -> &String {
-        &self.entries.get(&id).unwrap().name
+    pub fn get_name(&self, id: u32) -> String {
+        self.index.get_name(id).clone().to_string()
     }
 
     pub fn get_parent(&self, id: u32) -> u32 {
-        self.entries.get(&id).unwrap().parent
+        self.index.get_parent(id)
     }
 
     pub fn is_directory(&self, id: u32) -> bool {
-        self.entries.get(&id).unwrap().is_directory
+        self.index.is_directory(id)
     }
-
-    // pub fn is_loaded(&self, id: u32) -> bool {
-    //     if self.is_directory(id) {
-    //         self.entries.get(&id).unwrap().children.is_some()
-    //     } else {
-    //         self.entries.get(&id).unwrap().photo_path.is_some()
-    //     }
-    // }
 }
 
 const CLIENT_SECRET_FILE: &'static str = "client_secret.json";
@@ -284,7 +226,7 @@ declare_types! {
         method getName(mut cx) {
             let id: u32 = cx.argument::<JsNumber>(0)?.value() as u32;
             let this = cx.this();
-            let name: String = cx.borrow(&this, |drive| drive.get_name(id).clone());
+            let name: String = cx.borrow(&this, |drive| drive.get_name(id));
             Ok(cx.string(name).upcast())
         }
 
