@@ -63,7 +63,7 @@ impl Index {
             entries: HashMap::new(),
             db: conn,
         };
-        index.restore_from_db();
+        index.restore_from_db()?;
         if index.is_empty() {
             // The database was empty. Initialize the index manually.
             index.create_root();
@@ -76,21 +76,41 @@ impl Index {
         let entries: Vec<(u32, Entry)> = {
             let mut stmt = self.db.prepare("SELECT * FROM entries")?;
             let entry_iter = stmt.query_map(params![], |row| {
+                // This lambda is executed for every row in the query
+
+                // First, recover the id and entry
                 let id = row.get(0)?;
-                let mut e = Entry::new(row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?);
-                let res: rusqlite::Result<String> = row.get(6);
-                e.children = match res {
-                    Ok(joined) => {
-                        let v = joined.as_str().split(",")
-                            .map(|s| s.parse::<u32>())
-                            .filter_map(Result::ok)
-                            .collect();
-                        Some(v)
-                    },
-                    Err(_e) => None,
-                };
+                let mut e = Entry::new(row.get(1)?, row.get(2)?, row.get(3)?, 
+                                       row.get(4)?, row.get(5)?);
+
+                if e.is_directory {
+                    // If e is fully loaded, parse the children field back
+                    // into the children of e
+                    let res: rusqlite::Result<String> = row.get(6);
+                    e.children = match res {
+                        Ok(joined) => {
+                            let v = joined.as_str().split(",")
+                                .map(|s| s.parse::<u32>())
+                                .filter_map(Result::ok)
+                                .collect();
+                            Some(v)
+                        },
+                        Err(_e) => None,
+                    };
+                } else {
+                    // If e is fully loaded, recover the photo path
+                    let res: rusqlite::Result<String> = row.get(7);
+                    e.photo_path = match res {
+                        Ok(path) => Some(path),
+                        Err(_e) => None,
+                    };
+                }
+
                 Ok((id, e))
             })?;
+
+            // Have to push them to a vector first to avoid conflicts
+            // with the borrow checker
             let mut res: Vec<(u32, Entry)> = vec![];
             for entry_result in entry_iter {
                 res.push(entry_result?)
@@ -98,19 +118,24 @@ impl Index {
             res
         };
 
+        // Finally, repopulate the hashmap
         for (id, e) in entries {
             self.reinsert_entry(id, e);
         }
         Ok(())
     }
 
+    // Inserts an entry into the immediate index without persisting
+    // it to the database.
     fn reinsert_entry(&mut self, id: u32, e: Entry) {
         self.compressed_ids.insert(e.drive_id.clone(), id);
         self.entries.insert(id, e);
     }
 
+    // Inserts an entry into the immediate index and also saves it
+    // to the database.
     pub fn create_entry(&mut self, e: Entry) -> BoxResult<u32> {
-        let mut stmt = self.db.execute(
+        self.db.execute(
             "INSERT INTO entries (name, drive_id, drive_type, parent, is_directory)
                 VALUES (?1, ?2, ?3, ?4, ?5)",
             params![e.name, e.drive_id, e.drive_type, e.parent, e.is_directory as u32],
@@ -120,8 +145,8 @@ impl Index {
         Ok(id)
     }
 
+    // Jumpstarts the index when used for the first time.
     pub fn create_root(&mut self) {
-        // The root folder is special, so manually initialize it
         let e = Entry::new("root".to_string(), "root".to_string(), DRIVE_FOLDER_TYPE.to_string(), 1, true);
         match self.create_entry(e) {
             Err(e) => eprintln!("create_entry error: {}", e),
@@ -135,15 +160,6 @@ impl Index {
             e.children.is_some()
         } else {
             e.photo_path.is_some()
-        }
-    }
-
-    pub fn load_directory(&mut self, id: u32) {
-        if !self.is_fully_loaded(id) {
-            let e = self.entries.get_mut(&id).unwrap();
-            if e.is_directory {
-                e.children = Some(vec![]);
-            }
         }
     }
 
@@ -205,17 +221,22 @@ impl Index {
         }
     }
 
-    pub fn add_loaded_photo(&mut self, id: u32, path: &str) {
+    pub fn add_loaded_photo(&mut self, id: u32, path: &str) -> BoxResult<()> {
         let e = self.entries.get_mut(&id).unwrap();
         e.photo_path = Some(path.clone().to_string());
+        let mut stmt = self.db.prepare(
+            "UPDATE entries SET photo_path = (?1) WHERE id = (?2)"
+        )?;
+        stmt.execute(params![path.to_string(), id])?;
+
+        Ok(())
     }
 
     pub fn get_photo_path(&self, id: u32) -> String {
         self.entries.get(&id).unwrap().photo_path.as_ref().unwrap().clone()
     }
 
-    // pub fn get_photo_path(&self, id: u32) -> 
-
+    // Accessor methods
     pub fn get_drive_id(&self, id: u32) -> &str {
         &self.entries.get(&id).unwrap().drive_id
     }

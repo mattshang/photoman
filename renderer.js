@@ -28,11 +28,11 @@ ipc.on('display-directory', (event, arg) => {
     fileList.removeChild(fileList.firstChild);
   }
 
-  for (let [id, name] of arg) {
+  for (let entry of arg) {
     // Append new <tr>
     var row = document.createElement('tr');
     var nameCell = document.createElement('td');
-    nameCell.appendChild(document.createTextNode(name));
+    nameCell.appendChild(document.createTextNode(entry.name));
     row.appendChild(nameCell);
     var typeCell = document.createElement('td');
     typeCell.appendChild(document.createTextNode('something'));
@@ -42,7 +42,10 @@ ipc.on('display-directory', (event, arg) => {
     row.appendChild(sizeCell);
 
     // Use HTML5 custom attribute to store id
-    row.setAttribute('data-id', id);
+    row.setAttribute('data-id', entry.id);
+    if (!entry.loaded) {
+      row.classList.add('unloaded');
+    }
     fileList.appendChild(row);
   }
 

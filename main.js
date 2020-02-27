@@ -52,8 +52,14 @@ function createWindow() {
 // could take a (very) long time, getChildren is async.
 async function getChildren() {
   const ids = drive.getChildren(current);
-  const zipped = ids.map(id => [id, drive.getName(id)]);
-  return zipped;
+  const entries = ids.map(id => {
+    return {
+      id: id,
+      name: drive.getName(id),
+      loaded: drive.isFullyLoaded(id),
+    };
+  })
+  return entries;
 }
 
 // This method will be called when Electron has finished

@@ -10,7 +10,6 @@ use neon::prelude::*;
 use std::fs;
 use std::io;
 use std::path::Path;
-use std::collections::HashMap;
 use std::process::Command;
 use std::ffi::OsStr;
 
@@ -51,11 +50,11 @@ impl GoogleDrive {
                 HttpsConnector::new(NativeTlsClient::new().unwrap()));
         let hub = DriveHub::new(client, authenticator);
 
-        let mut drive = GoogleDrive { 
+        let drive = GoogleDrive { 
             hub: hub,
             index: match index::Index::new() {
                 Ok(val) => val,
-                Err(e) => panic!("Index errored"),
+                Err(_e) => panic!("Index errored"),
             },
         };
 
@@ -84,7 +83,10 @@ impl GoogleDrive {
             .doit()
             .unwrap();
 
-        self.index.add_children(id, list_result.files.as_ref().unwrap());
+        match self.index.add_children(id, list_result.files.as_ref().unwrap()) {
+            Ok(_) => (),
+            Err(e) => eprintln!("add_children error: {}", e),
+        }
         // let mut children: Vec<u32> = vec![];
         // for file in list_result.files.unwrap_or(vec![]) {
         //     self.index.add_child(id, &file);
@@ -102,8 +104,6 @@ impl GoogleDrive {
             return Ok(self.index.get_photo_path(id).to_string());
         }
 
-        use std::time::Instant;
-        let now = Instant::now();
         // Download the photo from Google Drive
         let scope = "https://www.googleapis.com/auth/drive";
         let drive_id = self.index.get_drive_id(id);
@@ -116,10 +116,6 @@ impl GoogleDrive {
             .doit()
             .unwrap();
 
-        let elapsed = now.elapsed();
-        println!("request took: {:.2?}", elapsed);
-        let now = Instant::now();
-        
         let extension = Path::new(self.index.get_name(id))
             .extension()
             .and_then(OsStr::to_str)
@@ -128,10 +124,6 @@ impl GoogleDrive {
         let mut out = fs::File::create(&path)?;
         // Write HTTPS response to file on disk
         io::copy(&mut resp, &mut out).expect("failed to write photo to local disk");
-
-        let elapsed = now.elapsed();
-        println!("write took: {:.2?}", elapsed);
-        let now = Instant::now();
 
         // Instead of having to convert the RAW image to JPG ourselves,
         // NEF RAW files include their own headers with a preview JPG
@@ -147,11 +139,10 @@ impl GoogleDrive {
             fs::rename(&preview, &path)?;
         }
 
-        let elapsed = now.elapsed();
-        println!("convert took: {:.2?}", elapsed);
-        let now = Instant::now();
-
-        self.index.add_loaded_photo(id, &path);
+        match self.index.add_loaded_photo(id, &path) {
+            Ok(_) => (),
+            Err(e) => eprintln!("add_loaded_photo error: {}", e),
+        }
 
         Ok(path)
     }
@@ -166,6 +157,10 @@ impl GoogleDrive {
 
     pub fn is_directory(&self, id: u32) -> bool {
         self.index.is_directory(id)
+    }
+
+    pub fn is_fully_loaded(&self, id: u32) -> bool {
+        self.index.is_fully_loaded(id)
     }
 }
 
@@ -187,7 +182,7 @@ const CLIENT_SECRET_FILE: &'static str = "client_secret.json";
 
 declare_types! {
     pub class JsGoogleDrive for GoogleDrive {
-        init(mut cx) {
+        init(_cx) {
             Ok(GoogleDrive::new(CLIENT_SECRET_FILE.to_string()))
         }
 
@@ -217,7 +212,7 @@ declare_types! {
             let path: String = cx.borrow_mut(&mut this, |mut drive| {
                 match drive.get_photo_path(id) {
                     Ok(path) => path,
-                    Err(e) => panic!("getPhotoPath threw an error")
+                    Err(_e) => panic!("getPhotoPath threw an error")
                 }
             });
 
@@ -246,6 +241,13 @@ declare_types! {
             let this = cx.this();
             let is_directory: bool = cx.borrow(&this, |drive| drive.is_directory(id));
             Ok(cx.boolean(is_directory).upcast())
+        }
+
+        method isFullyLoaded(mut cx) {
+            let id: u32 = cx.argument::<JsNumber>(0)?.value() as u32;
+            let this = cx.this();
+            let is_fully_loaded: bool = cx.borrow(&this, |drive| drive.is_fully_loaded(id));
+            Ok(cx.boolean(is_fully_loaded).upcast())
         }
     }
 }
