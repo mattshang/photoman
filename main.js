@@ -15,7 +15,7 @@ let mainWindow;
 // GoogleDrive instance
 let drive;
 // ID of the current folder
-let current = 0;
+let current = 1;
 
 function createWindow() {
   // Create the browser window.
@@ -63,7 +63,7 @@ app.on('ready', () => {
   createWindow();
   drive = new GoogleDrive();
   mainWindow.webContents.once('dom-ready', async () => {
-    current = 0;
+    current = 1;
     const zipped = await getChildren();
     mainWindow.webContents.send('display-directory', zipped);
   })
@@ -105,7 +105,6 @@ ipc.on('request-entry', async (event, arg) => {
 
 // The file-back event is emitted by the renderer. 
 ipc.on('file-back', async (event, arg) => {
-  console.log(current);
   current = drive.getParent(current);
   const zipped = await getChildren();
   event.sender.send('display-directory', zipped);

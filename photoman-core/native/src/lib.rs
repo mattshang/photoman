@@ -53,7 +53,10 @@ impl GoogleDrive {
 
         let mut drive = GoogleDrive { 
             hub: hub,
-            index: index::Index::new(),
+            index: match index::Index::new() {
+                Ok(val) => val,
+                Err(e) => panic!("Index errored"),
+            },
         };
 
         drive
@@ -81,10 +84,11 @@ impl GoogleDrive {
             .doit()
             .unwrap();
 
+        self.index.add_children(id, list_result.files.as_ref().unwrap());
         // let mut children: Vec<u32> = vec![];
-        for file in list_result.files.unwrap_or(vec![]) {
-            self.index.add_child(id, &file);
-        }
+        // for file in list_result.files.unwrap_or(vec![]) {
+        //     self.index.add_child(id, &file);
+        // }
 
         // clone
         self.index.get_children(id)
