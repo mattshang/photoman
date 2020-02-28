@@ -20,8 +20,8 @@ let current = 1;
 function createWindow() {
   // Create the browser window.
   mainWindow = new BrowserWindow({
-    width: 1920,
-    height: 1080,
+    width: 960,
+    height: 540,
     webPreferences: {
       nodeIntegration: true,
       // Set webSecurity to false so we can load images from the local disk
@@ -115,3 +115,16 @@ ipc.on('file-back', async (event, arg) => {
   const zipped = await getChildren();
   event.sender.send('display-directory', zipped);
 });
+
+ipc.on('refresh-current', async (event, arg) => {
+  if (drive.isDirectory(current)) {
+    drive.refresh(current);
+    event.sender.send('display-directory', await getChildren());
+  }
+})
+
+ipc.on('home', async (event, arg) => {
+  current = 1;
+  const zipped = await getChildren();
+  event.sender.send('display-directory', zipped);
+})

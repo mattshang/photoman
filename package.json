@@ -1,7 +1,7 @@
 {
   "name": "photoman",
   "version": "0.1.0",
-  "description": "",
+  "description": "Photo management tool for Google Drive",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -16,6 +16,7 @@
   "devDependencies": {
     "electron": "^8.0.1",
     "electron-build-env": "^0.2.0",
+    "electron-packager": "^14.2.1",
     "neon-cli": "^0.3.3"
   },
   "dependencies": {

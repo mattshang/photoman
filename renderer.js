@@ -6,6 +6,14 @@ backButton.addEventListener('click', e => {
   ipc.send('file-back');
 })
 
+document.querySelector('#refresh-button').addEventListener('click', e => {
+  ipc.send('refresh-current');
+})
+
+document.querySelector('#home-button').addEventListener('click', e => {
+  ipc.send('home');
+})
+
 const table = document.querySelector('#file-table');
 const fileList = document.querySelector('#file-table tbody');
 const contents = document.querySelector('.window-content');

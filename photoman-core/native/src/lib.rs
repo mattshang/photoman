@@ -87,12 +87,8 @@ impl GoogleDrive {
             Ok(_) => (),
             Err(e) => eprintln!("add_children error: {}", e),
         }
-        // let mut children: Vec<u32> = vec![];
-        // for file in list_result.files.unwrap_or(vec![]) {
-        //     self.index.add_child(id, &file);
-        // }
 
-        // clone
+        // Clone to avoid borrow checker issues
         self.index.get_children(id)
     }
 
@@ -161,6 +157,11 @@ impl GoogleDrive {
 
     pub fn is_fully_loaded(&self, id: u32) -> bool {
         self.index.is_fully_loaded(id)
+    }
+
+    pub fn refresh(&mut self, id: u32) {
+        self.index.clear_children(id);
+        self.get_children(id);
     }
 }
 
@@ -248,6 +249,15 @@ declare_types! {
             let this = cx.this();
             let is_fully_loaded: bool = cx.borrow(&this, |drive| drive.is_fully_loaded(id));
             Ok(cx.boolean(is_fully_loaded).upcast())
+        }
+
+        method refresh(mut cx) {
+            let id: u32 = cx.argument::<JsNumber>(0)?.value() as u32;
+            let mut this = cx.this();
+            cx.borrow_mut(&mut this, |mut drive| {
+                drive.refresh(id);
+            });
+            Ok(cx.undefined().upcast())
         }
     }
 }

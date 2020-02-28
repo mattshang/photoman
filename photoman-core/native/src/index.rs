@@ -260,4 +260,9 @@ impl Index {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+
+    pub fn clear_children(&mut self, id: u32) {
+        let e = self.entries.get_mut(&id).unwrap();
+        e.children = None;
+    }
 }
